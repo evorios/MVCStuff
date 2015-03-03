@@ -4,6 +4,7 @@ using System.Linq;
 using System.Web;
 using System.Web.Mvc;
 using System.ComponentModel;
+using System.Collections;
 
     /// <summary>
     /// ASP.NET MVC Default Dictionary Binder
@@ -50,26 +51,33 @@ using System.ComponentModel;
         public override object BindModel(ControllerContext controllerContext, ModelBindingContext bindingContext)
         {
             Type modelType = bindingContext.ModelType;
-            Type idictType = modelType.GetInterface("System.Collections.Generic.IDictionary`2");
+            Type idictType = null;
+            if (modelType.IsInterface && modelType.IsGenericType && modelType.GetGenericTypeDefinition() == typeof(IDictionary<,>))
+            {
+                idictType = modelType;
+            }
             if (idictType != null)
             {
-                object result = null;
+                IDictionary result = null;
 
                 Type[] ga = idictType.GetGenericArguments();
                 IModelBinder valueBinder = Binders.GetBinder(ga[1]);
-                
+
                 foreach (string key in GetValueProviderKeys(controllerContext))
                 {
-                    if (key.StartsWith(bindingContext.ModelName + "[", StringComparison.InvariantCultureIgnoreCase))
+                    int startbracket = key.StartsWith(bindingContext.ModelName + "[", StringComparison.InvariantCultureIgnoreCase)
+                        ? bindingContext.ModelName.Length : (bindingContext.FallbackToEmptyPrefix ? key.IndexOf('[') : -1);
+
+                    if (startbracket >= 0)
                     {
-                        int endbracket = key.IndexOf("]", bindingContext.ModelName.Length + 1);
+                        int endbracket = key.IndexOf("]", startbracket + 1);
                         if (endbracket == -1)
                             continue;
 
                         object dictKey;
                         try
                         {
-                            dictKey = ConvertType(key.Substring(bindingContext.ModelName.Length + 1, endbracket - bindingContext.ModelName.Length - 1), ga[0]);
+                            dictKey = ConvertType(key.Substring(startbracket + 1, endbracket - startbracket - 1), ga[0]);
                         }
                         catch (NotSupportedException)
                         {
@@ -92,10 +100,12 @@ using System.ComponentModel;
                         object newPropertyValue = valueBinder.BindModel(controllerContext, innerBindingContext);
 
                         if (result == null)
-                            result = CreateModel(controllerContext, bindingContext, modelType);
+                            result = (IDictionary)CreateModel(controllerContext, bindingContext, modelType);
 
-                        if (!(bool)idictType.GetMethod("ContainsKey").Invoke(result, new object[] { dictKey }))
-                            idictType.GetProperty("Item").SetValue(result, newPropertyValue, new object[] { dictKey });
+                        if (!result.Contains(dictKey))
+                        {
+                            result.Add(dictKey, newPropertyValue);
+                        }
                     }
                 }
 
